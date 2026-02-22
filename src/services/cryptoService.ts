@@ -1,0 +1,94 @@
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import * as bip39 from 'bip39';
+import { Buffer } from 'buffer';
+
+// Ensure Buffer exists in browser for bip39
+if (typeof (globalThis as any).Buffer === 'undefined') {
+  (globalThis as any).Buffer = Buffer;
+}
+
+export class CryptoService {
+  // Hash any data
+  static hash(data: string): string {
+    const hashBytes = sha256(new TextEncoder().encode(data));
+    return bytesToHex(hashBytes);
+  }
+
+  // Create a deterministic hash for a vote
+  static hashVote(vote: any): string {
+    const voteString = JSON.stringify(vote, Object.keys(vote).sort());
+    return this.hash(voteString);
+  }
+
+  // Create block hash (includes pubkey when present for tamper-proofing)
+  static hashBlock(block: Omit<any, 'currentHash'>): string {
+    const blockData: any = {
+      index: block.index,
+      timestamp: block.timestamp,
+      previousHash: block.previousHash,
+      voteHash: block.voteHash,
+      signature: block.signature,
+      nonce: block.nonce || 0
+    };
+    if (block.pubkey) {
+      blockData.pubkey = block.pubkey;
+    }
+    if (block.actionType) {
+      blockData.actionType = block.actionType;
+    }
+    if (block.actionLabel) {
+      blockData.actionLabel = block.actionLabel;
+    }
+    const blockString = JSON.stringify(blockData);
+    return this.hash(blockString);
+  }
+
+  // Generate 12-word mnemonic
+  static generateMnemonic(): string {
+    return bip39.generateMnemonic();
+  }
+
+  // Validate mnemonic
+  static validateMnemonic(mnemonic: string): boolean {
+    return bip39.validateMnemonic(mnemonic);
+  }
+
+  // Derive receipt ID from mnemonic
+  static mnemonicToReceiptId(mnemonic: string): string {
+    const seed = bip39.mnemonicToSeedSync(mnemonic);
+    return bytesToHex(sha256(seed)).substring(0, 32);
+  }
+
+  // Generate browser fingerprint (anonymous)
+  static async generateFingerprint(): Promise {
+    const data = [
+      navigator.userAgent,
+      navigator.language,
+      new Date().getTimezoneOffset(),
+      screen.colorDepth,
+      screen.width + 'x' + screen.height,
+      navigator.hardwareConcurrency || 'unknown'
+    ].join('|');
+    
+    return this.hash(data);
+  }
+
+  // Schnorr signature over secp256k1
+  static sign(data: string, privateKey: string): string {
+    const messageHash = this.hash(data);
+    const sig = schnorr.sign(hexToBytes(messageHash), hexToBytes(privateKey));
+    return bytesToHex(sig);
+  }
+
+  // Verify Schnorr signature using public key
+  static verify(data: string, signature: string, publicKey: string): boolean {
+    try {
+      const messageHash = this.hash(data);
+      return schnorr.verify(hexToBytes(signature), hexToBytes(messageHash), hexToBytes(publicKey));
+    } catch {
+      return false;
+    }
+  }
+}
